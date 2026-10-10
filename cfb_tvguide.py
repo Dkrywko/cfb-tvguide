@@ -387,6 +387,13 @@ def shared_window(by_day, tz, slot_min):
     return lo, int((hi - lo) // slot_min)
 
 
+def stretch_live(games, now, slot_min):
+    """A game still on past its assumed window keeps its block a slot beyond now."""
+    for g in games:
+        if g.state == "in":
+            g.end = max(g.end, now + dt.timedelta(minutes=slot_min))
+
+
 def day_order(days, today, win_start, win_end):
     """Week in progress: today, then later days, then earlier days newest-first.
     Past or future week: chronological."""
@@ -914,6 +921,8 @@ def build_page(args, tz, tzname, now, poll=0):
 
     if not games:
         raise NoGames("No games found. Try --week N, --offset 1, or --division all.")
+
+    stretch_live(games, now, args.slot)
 
     by_day = defaultdict(list)
     for g in games:
