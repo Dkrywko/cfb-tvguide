@@ -59,6 +59,7 @@ polled every 5 minutes.
 | `--groups 8` | Raw ESPN group id, e.g. a single conference (8 = SEC) |
 | `--ranked-only` | Only games with an AP/CFP top-25 team |
 | `--network ESPN` | Keep only matching networks (repeatable, substring match) |
+| `--channels FILE` | Network-to-channel map (default `~/.config/cfb-tvguide/channels.json`, if present) |
 | `--team UGA` | Favorite team by ESPN id, abbreviation or name (repeatable, exact match) |
 | `--hide-streaming` | Drop streaming-only games and TBD |
 | `--logos none\|link\|embed` | `embed` inlines logos so a written file works offline |
@@ -68,6 +69,15 @@ polled every 5 minutes.
 | `--cache-ttl N` | Fixed cache lifetime in seconds instead of adaptive (`0` = always fetch) |
 | `--now 2026-09-26T15:30` | Pretend it is this local time (testing) |
 | `-o out.html` / `--open` | Output path, and whether to open a browser |
+
+## Channel numbers
+
+An optional JSON object maps network names to your provider's channels. Keys match
+case-insensitively; values are shown as written. It is read once at startup.
+
+```json
+{"ABC": "7.1", "ESPN": 206, "ESPN2": 209, "SEC Network": 611}
+```
 
 ## Notes
 

@@ -32,6 +32,7 @@ CORE_API = "http://sports.core.api.espn.com/v2/sports/football/leagues/college-f
 # site.api 403s on most explicit User-Agents but serves urllib's default; keep bare first.
 UA_CHAIN = (None, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "cfb-tvguide"
+CHANNELS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cfb-tvguide" / "channels.json"
 
 # Adaptive cache lifetimes, chosen per response from what it contains.
 LIVE_TTL = 300                          # a game is on
@@ -203,6 +204,7 @@ class Game:
         self.start = self.utc.astimezone(tz)
         self.end = self.start + dt.timedelta(minutes=game_len)
         self.network = (comp.get("broadcast") or "").strip() or self._geo(comp) or "TBD"
+        self.channel = ""
         self.venue = (comp.get("venue") or {}).get("fullName") or ""
         city = ((comp.get("venue") or {}).get("address") or {})
         self.city = ", ".join(x for x in (city.get("city"), city.get("state") or city.get("country")) if x)
@@ -409,6 +411,21 @@ def shared_window(by_day, tz, slot_min):
     return lo, int((hi - lo) // slot_min)
 
 
+def load_channels(path, required: bool):
+    """Network -> channel label from a local JSON object, keys matched case-insensitively."""
+    try:
+        data = json.loads(Path(path).expanduser().read_text())
+    except FileNotFoundError:
+        if required:
+            sys.exit(f"channel map not found: {path}")
+        return {}
+    except ValueError as ex:
+        sys.exit(f"channel map {path}: {ex}")
+    if not isinstance(data, dict):
+        sys.exit(f"channel map {path}: expected a JSON object of network -> channel")
+    return {str(k).lower(): str(v) for k, v in data.items()}
+
+
 def mark_favs(games, keys):
     """Flag teams matching any key: ESPN id, abbreviation, short or full name (case-insensitive)."""
     keys = {k.strip().lower() for k in keys if k.strip()}
@@ -509,7 +526,8 @@ def render_game(g, grid_start, slot_min, row, logos, show_net=False):
 
     note = f'<span class="note">{esc(g.note)}</span>' if g.note else ""
     if show_net:                                 # "Your teams" row: say where it's on
-        note = f'<span class="fnet">{esc(g.network)}</span>' + note
+        where = g.network + (f" {g.channel}" if g.channel else "")
+        note = f'<span class="fnet">{esc(where)}</span>' + note
     return (
         f'<a class="{" ".join(classes)}" style="grid-row:{row};grid-column:{col}/span {span};'
         f'--accent:{accent}" href="{esc(g.link)}" target="_blank" rel="noopener" title="{esc(title)}">'
@@ -526,7 +544,7 @@ def render_tba(games):
         chips.append(
             f'<a class="chip{" fav" if g.fav else ""}" style="--accent:{accent}" href="{esc(g.link)}" target="_blank" '
             f'rel="noopener" title="{esc(g.venue)}">'
-            f'<span class="chip-net">{esc(g.network)}</span>'
+            f'<span class="chip-net">{esc(g.network)}{" " + esc(g.channel) if g.channel else ""}</span>'
             f'<span class="chip-mu">{esc(g.matchup())}</span></a>'
         )
     return (f'<div class="tba"><span class="tba-lbl">Time TBA</span>'
@@ -574,9 +592,11 @@ def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_
     row = 2
     for net, lanes in rows:
         label = "&#9733; Your teams" if net is None else esc(net)
+        ch = "" if net is None else lanes[0][0].channel
+        ch = f'<span class="ch">{esc(ch)}</span>' if ch else ""
         parts.append(
             f'<div class="net{" mine" if net is None else ""}" style="grid-row:{row}/span {len(lanes)}">'
-            f'<span>{label}</span></div>'
+            f'<span>{label}</span>{ch}</div>'
         )
         for i, lane in enumerate(lanes):
             edge = " last" if i == len(lanes) - 1 else ""   # heavier rule under the network
@@ -731,9 +751,10 @@ a{color:inherit}
 
 .net{position:sticky;left:0;z-index:3;grid-column:1;background:var(--sunk);
   border-right:2px solid var(--rule);border-bottom:2px solid var(--rule);
-  display:flex;align-items:center;padding:0 10px;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:center;padding:0 10px;overflow:hidden;
   font-family:var(--display);font-size:14px;font-weight:600;letter-spacing:.02em}
 .net span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net .ch{font-size:11px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .lanebg{z-index:0;border-bottom:1px solid var(--rule-soft);
   background-image:linear-gradient(to right,var(--rule) 0 1px,transparent 1px);
   background-size:calc(var(--slotw)*4) 100%}
@@ -1000,6 +1021,7 @@ def parse_args(argv=None):
     p.add_argument("--hide-streaming", action="store_true", help="drop ESPN+/SECN+/Peacock-only games")
     p.add_argument("--ranked-only", action="store_true", help="only games involving an AP/CFP top-25 team")
     p.add_argument("--network", action="append", default=[], help="only these networks (repeatable, substring)")
+    p.add_argument("--channels", help=f"JSON map of network to channel number (default {CHANNELS}, if present)")
     p.add_argument("--team", action="append", default=[],
                    help="favorite team: ESPN id, abbreviation or name (repeatable, exact match)")
     p.add_argument("--logos", default="link", choices=["none", "link", "embed"],
@@ -1087,6 +1109,9 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
 
     stretch_live(games, now, args.slot)
     mark_favs(games, [*args.team, *favs])
+    channels = getattr(args, "channel_map", {})
+    for g in games:
+        g.channel = channels.get(g.network.lower(), "")
 
     by_day = defaultdict(list)
     for g in games:
@@ -1218,6 +1243,9 @@ def main(argv=None):
     if not tzname_arg and dt.datetime.now(tz).utcoffset() == dt.timedelta(0) and not args.quiet:
         print("note: this machine is on UTC; kickoff times will look shifted. "
               "Use --tz America/New_York (or set CFB_TZ).", file=sys.stderr)
+
+    # read once at startup, so a bad map fails here rather than inside a served request
+    args.channel_map = load_channels(args.channels or CHANNELS, required=bool(args.channels))
 
     if args.serve:
         return serve(args, tz, tzname)
