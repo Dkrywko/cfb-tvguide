@@ -348,15 +348,30 @@ class Logos:
 # --------------------------------------------------------------------------- #
 # layout
 # --------------------------------------------------------------------------- #
+TIER_OF = {n.lower(): tier for tier, names in enumerate(NETWORK_TIERS) for n in names}
+
+
+def _net_parts(name: str):
+    """Simulcasts arrive joined: "ESPN/Disney+"."""
+    return [p.strip() for p in name.split("/") if p.strip()] or [name]
+
+
+def _part_tier(part: str) -> int:
+    tier = TIER_OF.get(part.lower())
+    if tier is not None:
+        return tier
+    return 3 if any(h in part for h in STREAMING_HINTS) else 2
+
+
+def streaming_only(name: str) -> bool:
+    return all(_part_tier(p) == 3 for p in _net_parts(name))
+
+
 def network_sort_key(name: str):
-    for tier, names in enumerate(NETWORK_TIERS):
-        if name in names:
-            return (tier, name.lower())
+    """Lineup tier, case-insensitive; a simulcast takes its best tier."""
     if name == "TBD":
         return (9, "")
-    if any(h in name for h in STREAMING_HINTS):
-        return (3, name.lower())
-    return (2, name.lower())
+    return (min(_part_tier(p) for p in _net_parts(name)), name.lower())
 
 
 def live_sort_key(net: str, lanes):
@@ -1082,7 +1097,7 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
                 continue
             if args.ranked_only and not g.ranked:
                 continue
-            if args.hide_streaming and (g.network == "TBD" or any(h in g.network for h in STREAMING_HINTS)):
+            if args.hide_streaming and (g.network == "TBD" or streaming_only(g.network)):
                 continue
             if args.network and not any(n.lower() in g.network.lower() for n in args.network):
                 continue
