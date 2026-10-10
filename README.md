@@ -79,6 +79,14 @@ case-insensitively; values are shown as written. It is read once at startup.
 {"ABC": "7.1", "ESPN": 206, "ESPN2": 209, "SEC Network": 611}
 ```
 
+## Tests
+
+```bash
+python3 -m unittest
+```
+
+Offline, against a trimmed ESPN scoreboard in `tests/fixtures/`.
+
 ## Notes
 
 - Team accent colors are pushed out of the narrow-band red range before use.
