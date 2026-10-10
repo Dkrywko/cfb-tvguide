@@ -496,20 +496,21 @@ def render_tba(games):
             f'<div class="chips">{"".join(chips)}</div></div>')
 
 
-def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_slots):
+def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_slots, collapsed=False):
     timed = [g for g in day_games if not g.time_tba]
     tba = [g for g in day_games if g.time_tba]
 
     nets = len({g.network for g in day_games})
     parts = [
-        f'<section class="day" data-day="{day.isoformat()}"><h2><span class="dow">{day:%A}</span>'
+        f'<details class="day" data-day="{day.isoformat()}"{"" if collapsed else " open"}>'
+        f'<summary><h2><span class="dow">{day:%A}</span>'
         f'<span class="dt">{day:%B %-d}</span>'
         f'<span class="ct">{plural(len(day_games), "game")} &middot; '
-        f'{plural(nets, "network")}</span></h2>'
+        f'{plural(nets, "network")}</span></h2></summary>'
     ]
     if not timed:
         parts.append(render_tba(tba))
-        parts.append("</section>")
+        parts.append("</details>")
         return "".join(parts)
 
     rows = build_day(timed, slot_min, live=is_today)
@@ -547,7 +548,7 @@ def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_
     parts.append("</div></div>")
     if tba:
         parts.append(render_tba(tba))
-    parts.append("</section>")
+    parts.append("</details>")
     return "".join(parts)
 
 
@@ -626,7 +627,15 @@ a{color:inherit}
 
 /* ---- day sections -------------------------------------------------------- */
 .day{padding:26px 24px 2px}
+.day summary{list-style:none;cursor:pointer}
+.day summary::-webkit-details-marker{display:none}
 .day h2{margin:0 0 9px;display:flex;align-items:baseline;gap:10px;font-weight:400}
+.day h2::before{content:"";align-self:center;width:6px;height:6px;flex:none;
+  border:solid var(--ink-3);border-width:0 2px 2px 0;transform:rotate(45deg) translateY(-2px);
+  transition:transform .12s ease}
+.day:not([open]) h2::before{transform:rotate(-45deg)}
+.day:not([open]) h2{opacity:.75}
+.day summary:hover h2{opacity:1}
 .day h2 .dow{font-family:var(--display);font-weight:700;font-size:22px;letter-spacing:.02em;
   text-transform:uppercase}
 .day h2 .dt{font-size:13px;color:var(--ink-2)}
@@ -682,7 +691,7 @@ a{color:inherit}
 .live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--live);
   animation:blip 1.6s ease-in-out infinite}
 @keyframes blip{50%{opacity:.25}}
-@media (prefers-reduced-motion:reduce){.live::before{animation:none}.game{transition:none}}
+@media (prefers-reduced-motion:reduce){.live::before{animation:none}.game,.day h2::before{transition:none}}
 .final{font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.12em;
   text-transform:uppercase;color:var(--ink-3)}
 
@@ -775,7 +784,7 @@ $days
       if(jump) g.parentNode.scrollLeft=Math.max(0,(slots-60/slot)*w);
     });
   }
-  // swap in a fresh copy, keeping each day's horizontal scroll
+  // swap in a fresh copy, keeping each day's horizontal scroll and open/closed state
   function refresh(){
     if(document.hidden) return;
     fetch(location.href,{cache:'no-store'}).then(function(r){
@@ -783,9 +792,13 @@ $days
     }).then(function(text){
       var next=new DOMParser().parseFromString(text,'text/html').getElementById('guide');
       var cur=document.getElementById('guide'); if(!next||!cur) return;
-      var keep={};
+      var keep={}, open={};
       cur.querySelectorAll('.day').forEach(function(d){
+        open[d.dataset.day]=d.open;
         var s=d.querySelector('.scroller'); if(s) keep[d.dataset.day]=s.scrollLeft;
+      });
+      next.querySelectorAll('.day').forEach(function(d){
+        if(d.dataset.day in open) d.open=open[d.dataset.day];
       });
       cur.replaceWith(next);
       next.querySelectorAll('.day').forEach(function(d){
@@ -930,9 +943,11 @@ def build_page(args, tz, tzname, now, poll=0):
 
     logos = Logos(args.logos, args.quiet)
     grid_offset, n_slots = shared_window(by_day, tz, args.slot)
+    in_week = win_start <= today <= win_end
     days_html = "".join(
         render_day(day, by_day[day], args.slot, logos, tzname, day == today,
-                   day_start(day, tz) + dt.timedelta(minutes=grid_offset), n_slots)
+                   day_start(day, tz) + dt.timedelta(minutes=grid_offset), n_slots,
+                   collapsed=in_week and day < today)
         for day in day_order(by_day, today, win_start, win_end)
     )
     logo_css = logos.css()
