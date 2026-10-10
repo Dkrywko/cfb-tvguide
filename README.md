@@ -13,6 +13,8 @@ API. Python 3.9+ standard library only.
 
 `--serve` runs a local web server that rebuilds the page on every load. The open page
 fetches a fresh copy every 60s and swaps it in place, keeping scroll position.
+Prev / Next links under the date range step through weeks (`?offset=N`, or `?week=N`
+when started with `--week`).
 
 Today's grid is ordered for "what's on now":
 
@@ -51,7 +53,7 @@ polled every 5 minutes.
 | `--host` / `--port` | Server bind, default `127.0.0.1:8080` |
 | `--week 5` | ESPN week 5, using ESPN's own week boundaries |
 | `--date 2026-11-28` | The football week containing that date |
-| `--offset 1` | Shift the default week (`-1` = last week) |
+| `--offset 1` | Shift the default week (`-1` = last week). Only an empty current or future week rolls forward |
 | `--tz America/Denver` | Kickoff times in this zone (default: system, or `$CFB_TZ`) |
 | `--division fbs\|fcs\|all` | Default `fbs` |
 | `--groups 8` | Raw ESPN group id, e.g. a single conference (8 = SEC) |

@@ -66,7 +66,9 @@ CLOSE_MARGIN = 8                        # one score: touchdown plus two-point co
 
 
 class NoGames(Exception):
-    pass
+    def __init__(self, msg, offset=0):
+        super().__init__(msg)
+        self.offset = offset
 
 
 # --------------------------------------------------------------------------- #
@@ -643,7 +645,13 @@ a{color:inherit}
 .top h1{margin:0;font-family:var(--display);font-weight:700;line-height:.9;
   font-size:clamp(38px,7vw,58px);letter-spacing:-.01em;display:flex;align-items:baseline;gap:10px}
 .top h1 .wknum{color:var(--gold);font-variant-numeric:tabular-nums}
-.range{font-size:13px;color:var(--ink-2);margin-top:6px;font-variant-numeric:tabular-nums}
+.range{font-size:13px;color:var(--ink-2);margin-top:6px;font-variant-numeric:tabular-nums;
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.wnav{display:inline-flex;gap:6px}
+.wnav a{font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-2);text-decoration:none;
+  border:1px solid var(--rule);border-radius:2px;padding:1px 7px}
+.wnav a:hover{color:var(--ink);border-color:var(--ink-3)}
 .stats{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:4px}
 .stat{display:flex;flex-direction:column;gap:1px}
 .stat b{font-family:var(--display);font-size:24px;font-weight:600;line-height:1;
@@ -799,7 +807,7 @@ $logocss
   <div class="brand">
     <span class="eyebrow">College Football</span>
     <h1>$heading</h1>
-    <span class="range">$range</span>
+    <span class="range">$range$nav</span>
   </div>
   <div class="spacer"></div>
   <div class="stats">$stats</div>
@@ -946,6 +954,33 @@ def default_window(today: dt.date, offset: int):
     return start, start + dt.timedelta(days=6)
 
 
+def week_nav(args, shown):
+    """Prev / next links for a served page: ESPN week numbers in --week mode, else offsets."""
+    if args.week:
+        links = [("&lsaquo; Prev", f"?week={args.week - 1}") if args.week > 1 else None,
+                 ("Next &rsaquo;", f"?week={args.week + 1}")]
+    else:
+        links = [("&lsaquo; Prev", f"?offset={shown - 1}"), ("Next &rsaquo;", f"?offset={shown + 1}")]
+    if getattr(args, "navigated", False):
+        links.insert(1, ("This week", "/"))
+    return '<span class="wnav">' + "".join(f'<a href="{h}">{t}</a>' for t, h in filter(None, links)) + "</span>"
+
+
+def nav_args(args, query: str):
+    """Copy of args for one request, with ?offset=N or ?week=N applied."""
+    req = argparse.Namespace(**vars(args))
+    req.navigated = False
+    q = urllib.parse.parse_qs(query)
+    try:
+        if "week" in q:
+            req.week, req.date, req.navigated = max(1, int(q["week"][0])), None, True
+        elif "offset" in q:
+            req.offset, req.navigated = max(-52, min(52, int(q["offset"][0]))), True
+    except ValueError:
+        pass
+    return req
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Build a TV-guide page of the week's college football games.")
     w = p.add_mutually_exclusive_group()
@@ -1035,18 +1070,20 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
     games, espn_week = collect(win_start, win_end)
 
     # offseason or bye-heavy stretch: roll forward to the next week with games
-    if not games and not args.week and not args.date:
+    # never for a week in the past: "last week" should not quietly become next week
+    shown = args.offset
+    if not games and not args.week and not args.date and args.offset >= 0:
         for ahead in range(1, 5):
             ws, we = default_window(today, args.offset + ahead)
             games, espn_week = collect(ws, we)
             if games:
-                win_start, win_end = ws, we
+                win_start, win_end, shown = ws, we, args.offset + ahead
                 if not args.quiet:
                     print(f"  (nothing scheduled this week; showing {ws})", file=sys.stderr)
                 break
 
     if not games:
-        raise NoGames("No games found. Try --week N, --offset 1, or --division all.")
+        raise NoGames("No games found. Try --week N, --offset 1, or --division all.", shown)
 
     stretch_live(games, now, args.slot)
     mark_favs(games, [*args.team, *favs])
@@ -1099,6 +1136,7 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
         title=title,
         heading=heading,
         range=f"{win_start:%b %-d} &ndash; {win_end:%b %-d, %Y}",
+        nav=week_nav(args, shown) if poll else "",
         stats=stats,
         rows=rows,
         tzname=esc(tzname),
@@ -1133,15 +1171,17 @@ def cookie_favs(header: str):
 def serve(args, tz, tzname):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path.split("?")[0] not in ("/", "/index.html"):
+            path, _, query = self.path.partition("?")
+            if path not in ("/", "/index.html"):
                 self.send_error(404)
                 return
+            req = nav_args(args, query)
             code = 200
             try:
                 favs = cookie_favs(self.headers.get("Cookie", ""))
-                body, _, _ = build_page(args, tz, tzname, current_time(args, tz), poll=POLL_SECONDS, favs=favs)
+                body, _, _ = build_page(req, tz, tzname, current_time(req, tz), poll=POLL_SECONDS, favs=favs)
             except NoGames as ex:
-                body = f"<title>College Football</title><p>{esc(ex)}</p>"
+                body = f"<title>College Football</title><p>{esc(ex)}</p><p>{week_nav(req, ex.offset)}</p>"
             except (urllib.error.URLError, OSError, ValueError) as ex:
                 code, body = 502, f"<title>College Football</title><p>ESPN fetch failed: {esc(ex)}</p>"
             data = body.encode("utf-8")
