@@ -753,17 +753,19 @@ $days
     var g=document.getElementById('guide');
     skew=g&&g.dataset.now?new Date(g.dataset.now)-Date.now():0;
   }
-  function tick(){
+  function tick(jump){
     document.querySelectorAll('.grid').forEach(function(g){
       var line=g.querySelector('.nowline'); if(!line) return;
       if(g.dataset.today!=='1'){line.hidden=true;return;}
       var start=new Date(g.dataset.start), slot=+g.dataset.slot;
       var slots=(Date.now()+skew-start)/60000/slot;
       var cs=getComputedStyle(g), cols=cs.gridTemplateColumns.split(' ');
-      var total=cols.length-1;
+      var total=cols.length-1, w=parseFloat(cols[1]);
       if(slots<0||slots>total){line.hidden=true;return;}
-      line.style.left=(parseFloat(cols[0])+slots*parseFloat(cols[1]))+'px';
+      line.style.left=(parseFloat(cols[0])+slots*w)+'px';
       line.hidden=false;
+      // first load only: bring the now-line into view with an hour of lead-in
+      if(jump) g.parentNode.scrollLeft=Math.max(0,(slots-60/slot)*w);
     });
   }
   // swap in a fresh copy, keeping each day's horizontal scroll
@@ -786,7 +788,7 @@ $days
       sync(); tick();
     }).catch(function(){});
   }
-  sync(); tick(); setInterval(tick,60000);
+  sync(); tick(true); setInterval(tick,60000);
   var poll=+document.getElementById('guide').dataset.poll;
   if(poll>0&&location.protocol.indexOf('http')===0){
     setInterval(refresh,poll*1000);
