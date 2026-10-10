@@ -16,9 +16,12 @@ fetches a fresh copy every 60s and swaps it in place, keeping scroll position.
 
 Today's grid is ordered for "what's on now":
 
-1. Networks with a game in progress, in lineup order
+1. Networks with a game in progress, close games first, in lineup order
 2. Networks with a game still to come, soonest kickoff first, lineup order on ties
 3. Networks finished for the day, in lineup order
+
+A game is **close** when it is in the 4th quarter or overtime and within 8 points. It gets
+a badge, and its network moves to the front of group 1.
 
 ESPN+ carries many games at once, so on today's grid it splits in two: the games in
 progress get their own ESPN+ row in group 1, and the rest stay in a second ESPN+ row.

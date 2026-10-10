@@ -62,6 +62,7 @@ NETWORK_TIERS = (
 STREAMING_HINTS = ("+", "Peacock", "Paramount", "Flo", "ESPN3", "Prime", "Netflix", "YouTube", "Extra")
 # Many streams under one name: on today's grid, games in progress get a row of their own.
 SPLIT_LIVE = ("ESPN+",)
+CLOSE_MARGIN = 8                        # one score: touchdown plus two-point conversion
 
 
 class NoGames(Exception):
@@ -210,6 +211,7 @@ class Game:
         self.odds = odds[0].get("details", "") if odds else ""
         self.over_under = odds[0].get("overUnder") if odds else None
 
+        self.period = comp.get("status", {}).get("period") or 0
         status = comp.get("status", {}).get("type", {})
         self.state = status.get("state", "pre")          # pre | in | post
         self.detail = status.get("shortDetail", "")
@@ -232,6 +234,16 @@ class Game:
     @property
     def ranked(self):
         return self.home.rank is not None or self.away.rank is not None
+
+    @property
+    def close(self):
+        """Live, 4th quarter or overtime, within one score."""
+        if self.state != "in" or self.period < 4:
+            return False
+        try:
+            return abs(int(self.home.score) - int(self.away.score)) <= CLOSE_MARGIN
+        except (TypeError, ValueError):
+            return False
 
     @property
     def fav(self):
@@ -344,11 +356,11 @@ def network_sort_key(name: str):
 
 
 def live_sort_key(net: str, lanes):
-    """On now, then soonest kickoff, then finished; lineup order breaks ties."""
+    """On now (close games first), then soonest kickoff, then finished; lineup order breaks ties."""
     games = [g for lane in lanes for g in lane]
     tier = network_sort_key(net)
     if any(g.state == "in" for g in games):
-        return (0, tier)
+        return (0, not any(g.close for g in games), tier)
     upcoming = [g.start for g in games if g.state == "pre"]
     if upcoming:
         return (1, min(upcoming), tier)
@@ -473,6 +485,8 @@ def render_game(g, grid_start, slot_min, row, logos, show_net=False):
 
     if g.state == "in":
         tag = f'<span class="live">LIVE &middot; {esc(g.short_status)}</span>'
+        if g.close:
+            tag += '<span class="close">Close</span>'
     elif g.state == "post":
         tag = '<span class="final">FINAL</span>'
     else:
@@ -739,6 +753,8 @@ a{color:inherit}
   animation:blip 1.6s ease-in-out infinite}
 @keyframes blip{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.live::before{animation:none}.game,.day h2::before{transition:none}}
+.close{font-family:var(--display);font-size:10px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--panel);background:var(--live);padding:0 5px;border-radius:2px}
 .final{font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.12em;
   text-transform:uppercase;color:var(--ink-3)}
 
