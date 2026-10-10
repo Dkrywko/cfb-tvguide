@@ -19,6 +19,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from collections import defaultdict
@@ -170,12 +171,15 @@ def parse_utc(s: str) -> dt.datetime:
 
 
 class Team:
-    __slots__ = ("abbr", "name", "rank", "score", "winner", "color", "logo", "record")
+    __slots__ = ("id", "abbr", "name", "full", "rank", "score", "winner", "color", "logo", "record", "fav")
 
     def __init__(self, comp):
         t = comp.get("team", {})
+        self.id = str(t.get("id") or "")
         self.abbr = t.get("abbreviation") or t.get("shortDisplayName") or "?"
         self.name = t.get("shortDisplayName") or t.get("location") or self.abbr
+        self.full = t.get("displayName") or self.name
+        self.fav = False
         rank = (comp.get("curatedRank") or {}).get("current", 99)
         self.rank = rank if isinstance(rank, int) and 1 <= rank <= 25 else None
         self.score = comp.get("score")
@@ -228,6 +232,10 @@ class Game:
     @property
     def ranked(self):
         return self.home.rank is not None or self.away.rank is not None
+
+    @property
+    def fav(self):
+        return self.home.fav or self.away.fav
 
     @property
     def top_rank(self):
@@ -387,6 +395,14 @@ def shared_window(by_day, tz, slot_min):
     return lo, int((hi - lo) // slot_min)
 
 
+def mark_favs(games, keys):
+    """Flag teams matching any key: ESPN id, abbreviation, short or full name (case-insensitive)."""
+    keys = {k.strip().lower() for k in keys if k.strip()}
+    for g in games:
+        for t in (g.home, g.away):
+            t.fav = bool(keys & {t.id, t.abbr.lower(), t.name.lower(), t.full.lower()})
+
+
 def stretch_live(games, now, slot_min):
     """A game still on past its assumed window keeps its block a slot beyond now."""
     for g in games:
@@ -433,13 +449,15 @@ def plural(n, word):
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
-def render_game(g, grid_start, slot_min, row, logos):
+def render_game(g, grid_start, slot_min, row, logos, show_net=False):
     col = int((g.start - grid_start).total_seconds() // 60 // slot_min) + 2  # +1 network col, +1 1-based
     span = max(2, int((g.end - g.start).total_seconds() // 60 // slot_min))
     accent = red_safe(g.home.color)
     classes = ["game", f"st-{g.state}"]
     if g.ranked:
         classes.append("ranked")
+    if g.fav:
+        classes.append("fav")
 
     def side(t, at=""):
         # empty spacer on the away line keeps both team names aligned
@@ -447,7 +465,8 @@ def render_game(g, grid_start, slot_min, row, logos):
         bits.append(logos.tag(t.logo))
         if t.rank:
             bits.append(f'<span class="rk">{t.rank}</span>')
-        bits.append(f'<span class="tm{" win" if g.state == "post" and t.winner else ""}">{esc(t.name)}</span>')
+        cls = "tm" + (" win" if g.state == "post" and t.winner else "") + (" mine" if t.fav else "")
+        bits.append(f'<span class="{cls}">{esc(t.name)}</span>')
         if g.state != "pre" and t.score is not None:
             bits.append(f'<span class="sc">{esc(t.score)}</span>')
         return f'<span class="side">{"".join(bits)}</span>'
@@ -473,6 +492,8 @@ def render_game(g, grid_start, slot_min, row, logos):
         title += "\n" + " | ".join(meta)
 
     note = f'<span class="note">{esc(g.note)}</span>' if g.note else ""
+    if show_net:                                 # "Your teams" row: say where it's on
+        note = f'<span class="fnet">{esc(g.network)}</span>' + note
     return (
         f'<a class="{" ".join(classes)}" style="grid-row:{row};grid-column:{col}/span {span};'
         f'--accent:{accent}" href="{esc(g.link)}" target="_blank" rel="noopener" title="{esc(title)}">'
@@ -487,7 +508,7 @@ def render_tba(games):
     for g in sorted(games, key=lambda x: (x.network, x.matchup())):
         accent = red_safe(g.home.color)
         chips.append(
-            f'<a class="chip" style="--accent:{accent}" href="{esc(g.link)}" target="_blank" '
+            f'<a class="chip{" fav" if g.fav else ""}" style="--accent:{accent}" href="{esc(g.link)}" target="_blank" '
             f'rel="noopener" title="{esc(g.venue)}">'
             f'<span class="chip-net">{esc(g.network)}</span>'
             f'<span class="chip-mu">{esc(g.matchup())}</span></a>'
@@ -514,6 +535,9 @@ def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_
         return "".join(parts)
 
     rows = build_day(timed, slot_min, live=is_today)
+    mine = [g for g in timed if g.fav]
+    if mine:                                     # duplicated above the networks, not moved
+        rows.insert(0, (None, pack_lanes(mine, slot_min)))
     per_hour = 60 // slot_min
     parts.append(
         f'<div class="scroller"><div class="grid" style="--slots:{n_slots}" '
@@ -533,15 +557,16 @@ def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_
 
     row = 2
     for net, lanes in rows:
+        label = "&#9733; Your teams" if net is None else esc(net)
         parts.append(
-            f'<div class="net" style="grid-row:{row}/span {len(lanes)}">'
-            f'<span>{esc(net)}</span></div>'
+            f'<div class="net{" mine" if net is None else ""}" style="grid-row:{row}/span {len(lanes)}">'
+            f'<span>{label}</span></div>'
         )
         for i, lane in enumerate(lanes):
             edge = " last" if i == len(lanes) - 1 else ""   # heavier rule under the network
             parts.append(f'<div class="lanebg{edge}" style="grid-row:{row};grid-column:2/span {n_slots}"></div>')
             for g in lane:
-                parts.append(render_game(g, grid_start, slot_min, row, logos))
+                parts.append(render_game(g, grid_start, slot_min, row, logos, show_net=net is None))
             row += 1
 
     parts.append('<div class="nowline" hidden></div>')
@@ -566,7 +591,7 @@ PAGE = Template("""<title>$title</title>
   --rule:#d3d8c9; --rule-soft:#e6e9de;
   --ink:#22261e; --ink-2:#4c5347; --ink-3:#727a6b;
   --gold:#7d611a; --gold-ink:#5d4712;
-  --live:#0f6f5b;
+  --live:#0f6f5b; --fav:#3d63a6;
   --shadow:0 1px 2px rgba(34,38,30,.07);
 
   --display:"Saira Condensed",ui-sans-serif,"Helvetica Neue Condensed","Arial Narrow",sans-serif;
@@ -577,7 +602,7 @@ PAGE = Template("""<title>$title</title>
   --rule:#3a4034; --rule-soft:#2d3229;
   --ink:#e8eade; --ink-2:#b3b9aa; --ink-3:#868d7d;
   --gold:#d5a94f; --gold-ink:#e8c884;
-  --live:#63cfb0;
+  --live:#63cfb0; --fav:#8fb1e8;
   --shadow:0 1px 2px rgba(0,0,0,.3);
 }}
 :root[data-theme=dark]{
@@ -585,7 +610,7 @@ PAGE = Template("""<title>$title</title>
   --rule:#3a4034; --rule-soft:#2d3229;
   --ink:#e8eade; --ink-2:#b3b9aa; --ink-3:#868d7d;
   --gold:#d5a94f; --gold-ink:#e8c884;
-  --live:#63cfb0;
+  --live:#63cfb0; --fav:#8fb1e8;
   --shadow:0 1px 2px rgba(0,0,0,.3);
 }
 
@@ -617,6 +642,28 @@ a{color:inherit}
   font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.12em;
   text-transform:uppercase}
 .tg:hover{color:var(--ink);border-color:var(--ink-3)}
+.tg + .tg{margin-left:-18px}
+
+/* ---- favorite teams ------------------------------------------------------ */
+.game.fav{border-color:var(--fav);outline:1.5px solid var(--fav);outline-offset:-1.5px}
+.tm.mine::before{content:"\\2605 ";color:var(--fav)}
+.fnet{font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--ink-2)}
+.net.mine{color:var(--fav)}
+.chip.fav{border-color:var(--fav)}
+.picker{position:fixed;top:12px;right:12px;z-index:20;width:min(340px,calc(100vw - 24px));
+  background:var(--panel);border:1px solid var(--rule);border-top:3px solid var(--fav);
+  box-shadow:0 6px 24px rgba(0,0,0,.18);padding:12px 14px 14px;font-size:13px}
+.picker label{display:block;font-family:var(--display);font-size:11px;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:6px}
+.picker input{width:100%;padding:7px 9px;font:inherit;color:var(--ink);background:var(--ground);
+  border:1px solid var(--rule);border-radius:2px}
+.favlist{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.favlist:empty::before{content:"None yet. Starred teams get a row at the top of each day.";
+  color:var(--ink-3);font-size:12px}
+.fchip{font:inherit;font-size:12px;color:var(--ink);background:var(--sunk);cursor:pointer;
+  border:1px solid var(--fav);border-radius:2px;padding:3px 8px}
+.fchip::after{content:" \\00d7";color:var(--ink-3)}
+.fchip:hover{background:color-mix(in srgb,var(--fav) 15%,var(--panel))}
 
 /* ---- legend -------------------------------------------------------------- */
 .legend{display:flex;gap:8px 20px;flex-wrap:wrap;padding:11px 24px;font-size:12px;
@@ -740,7 +787,7 @@ $logocss
   </div>
   <div class="spacer"></div>
   <div class="stats">$stats</div>
-  <button class="tg" id="theme" type="button">Theme</button>
+  $teamsbtn<button class="tg" id="theme" type="button">Theme</button>
 </header>
 <div class="legend">
   <span><i>Rows</i> $rows</span>
@@ -751,6 +798,7 @@ $logocss
 $days
 <footer>$ngames games &middot; built $generated$refresh &middot; schedule and scores from ESPN</footer>
 </main>
+$picker
 <script>
 (function(){
   var root=document.documentElement, k='cfb-theme', skew=0;
@@ -764,6 +812,50 @@ $days
     root.setAttribute('data-theme',next);
     try{localStorage.setItem(k,next);}catch(e){}
   });
+  // favorite teams: [[espn id, name], ...] in a cookie the server reads on every build
+  var ck='cfb-teams', picker=document.getElementById('picker');
+  function favs(){
+    var m=document.cookie.split('; ').filter(function(c){return c.indexOf(ck+'=')===0;})[0];
+    try{return m?JSON.parse(decodeURIComponent(m.slice(ck.length+1))):[];}catch(e){return [];}
+  }
+  function drawFavs(){
+    var box=document.getElementById('favlist'); if(!box) return;
+    box.textContent='';
+    favs().forEach(function(f){
+      var b=document.createElement('button');
+      b.type='button'; b.className='fchip'; b.dataset.id=f[0]; b.textContent=f[1];
+      b.title='Remove '+f[1]; box.appendChild(b);
+    });
+  }
+  function saveFavs(list){
+    document.cookie=ck+'='+encodeURIComponent(JSON.stringify(list))+'; max-age=31536000; path=/; SameSite=Lax';
+    drawFavs(); refresh();
+  }
+  if(picker){
+    drawFavs();
+    document.addEventListener('click',function(e){
+      if(e.target.closest('#teams')){
+        picker.hidden=!picker.hidden;
+        if(!picker.hidden) document.getElementById('teamq').focus();
+        return;
+      }
+      var chip=e.target.closest('.fchip');
+      if(chip){
+        saveFavs(favs().filter(function(f){return f[0]!==chip.dataset.id;}));
+        return;
+      }
+      if(!picker.hidden&&!e.target.closest('#picker')) picker.hidden=true;
+    });
+    document.addEventListener('keydown',function(e){if(e.key==='Escape') picker.hidden=true;});
+    document.getElementById('teamq').addEventListener('input',function(){
+      var q=this, opt=[].filter.call(document.getElementById('teamopts').options,
+        function(o){return o.value===q.value;})[0];
+      if(!opt) return;
+      var list=favs();
+      if(!list.some(function(f){return f[0]===opt.dataset.id;})) list.push([opt.dataset.id,opt.value]);
+      q.value=''; saveFavs(list);
+    });
+  }
   // "now" comes from the server so --now testing lines up
   function sync(){
     var g=document.getElementById('guide');
@@ -857,6 +949,8 @@ def parse_args(argv=None):
     p.add_argument("--hide-streaming", action="store_true", help="drop ESPN+/SECN+/Peacock-only games")
     p.add_argument("--ranked-only", action="store_true", help="only games involving an AP/CFP top-25 team")
     p.add_argument("--network", action="append", default=[], help="only these networks (repeatable, substring)")
+    p.add_argument("--team", action="append", default=[],
+                   help="favorite team: ESPN id, abbreviation or name (repeatable, exact match)")
     p.add_argument("--logos", default="link", choices=["none", "link", "embed"],
                    help="team logos: link to ESPN CDN (default), embed as data URIs, or omit")
     p.add_argument("--cache-ttl", type=int, default=None,
@@ -879,8 +973,11 @@ def current_time(args, tz):
     return t.replace(tzinfo=tz) if t.tzinfo is None else t.astimezone(tz)
 
 
-def build_page(args, tz, tzname, now, poll=0):
-    """Fetch, filter and lay out one week; return (html, n_games, n_days). Raises NoGames."""
+def build_page(args, tz, tzname, now, poll=0, favs=()):
+    """Fetch, filter and lay out one week; return (html, n_games, n_days). Raises NoGames.
+
+    favs: extra favorite-team keys on top of --team, from the served page's cookie.
+    """
     ttl = args.cache_ttl
     today = (now - dt.timedelta(hours=args.day_rollover)).date()     # TV day, not calendar day
     year = args.year or (today.year if today.month >= 2 else today.year - 1)
@@ -936,6 +1033,7 @@ def build_page(args, tz, tzname, now, poll=0):
         raise NoGames("No games found. Try --week N, --offset 1, or --division all.")
 
     stretch_live(games, now, args.slot)
+    mark_favs(games, [*args.team, *favs])
 
     by_day = defaultdict(list)
     for g in games:
@@ -970,6 +1068,17 @@ def build_page(args, tz, tzname, now, poll=0):
     )
     rows = "networks" + (" &mdash; today: on now, then next kickoff" if today in by_day else "")
 
+    teamsbtn = picker = ""
+    if poll:                                     # favorites ride a cookie, so served pages only
+        teams = {t.id: t.full for g in games for t in (g.home, g.away) if t.id}
+        opts = "".join(f'<option value="{esc(n)}" data-id="{esc(i)}">'
+                       for i, n in sorted(teams.items(), key=lambda x: x[1]))
+        teamsbtn = '<button class="tg" id="teams" type="button">Teams</button>'
+        picker = (f'<div class="picker" id="picker" hidden><label for="teamq">Your teams</label>'
+                  f'<input id="teamq" list="teamopts" placeholder="Add a team playing this week" '
+                  f'autocomplete="off"><datalist id="teamopts">{opts}</datalist>'
+                  f'<div class="favlist" id="favlist"></div></div>')
+
     page = PAGE.substitute(
         title=title,
         heading=heading,
@@ -979,6 +1088,8 @@ def build_page(args, tz, tzname, now, poll=0):
         tzname=esc(tzname),
         gamelen=args.game_len,
         days=days_html,
+        teamsbtn=teamsbtn,
+        picker=picker,
         logocss=logo_css,
         ngames=len(games),
         generated=now.strftime("%b %-d, %Y at %-I:%M %p %Z"),
@@ -989,6 +1100,20 @@ def build_page(args, tz, tzname, now, poll=0):
     return page, len(games), len(by_day)
 
 
+def cookie_favs(header: str):
+    """ESPN team ids from the served page's cfb-teams cookie: [[id, name], ...]."""
+    for part in header.split(";"):
+        k, _, v = part.strip().partition("=")
+        if k != "cfb-teams":
+            continue
+        try:
+            items = json.loads(urllib.parse.unquote(v))
+        except ValueError:
+            return []
+        return [str(f[0]) for f in items if isinstance(f, list) and f] if isinstance(items, list) else []
+    return []
+
+
 def serve(args, tz, tzname):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -997,7 +1122,8 @@ def serve(args, tz, tzname):
                 return
             code = 200
             try:
-                body, _, _ = build_page(args, tz, tzname, current_time(args, tz), poll=POLL_SECONDS)
+                favs = cookie_favs(self.headers.get("Cookie", ""))
+                body, _, _ = build_page(args, tz, tzname, current_time(args, tz), poll=POLL_SECONDS, favs=favs)
             except NoGames as ex:
                 body = f"<title>College Football</title><p>{esc(ex)}</p>"
             except (urllib.error.URLError, OSError, ValueError) as ex:

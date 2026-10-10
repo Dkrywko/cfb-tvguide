@@ -26,6 +26,10 @@ progress get their own ESPN+ row in group 1, and the rest stay in a second ESPN+
 Other days keep plain lineup order: over-the-air, national cable, conference networks,
 streaming, TBD.
 
+Favorite teams get a star, a highlight, and a "Your teams" row at the top of each day.
+On a served page, pick them with the Teams button; they're kept in a cookie. For a
+written file, use `--team`.
+
 During a week in progress, today's grid comes first, then the days still to come, then
 earlier days newest-first. Past and future weeks stay in date order.
 
@@ -50,6 +54,7 @@ polled every 5 minutes.
 | `--groups 8` | Raw ESPN group id, e.g. a single conference (8 = SEC) |
 | `--ranked-only` | Only games with an AP/CFP top-25 team |
 | `--network ESPN` | Keep only matching networks (repeatable, substring match) |
+| `--team UGA` | Favorite team by ESPN id, abbreviation or name (repeatable, exact match) |
 | `--hide-streaming` | Drop streaming-only games and TBD |
 | `--logos none\|link\|embed` | `embed` inlines logos so a written file works offline |
 | `--game-len 210` | Assumed block width in minutes |
