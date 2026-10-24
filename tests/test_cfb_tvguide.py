@@ -113,7 +113,7 @@ class TestRedSafe(unittest.TestCase):
             self.assertLessEqual(sat, 0.41, red)           # 1 - 0.60 at pure red, plus rounding
 
     def test_crimson_is_muted(self):
-        # crimsons stay near 0 degrees, desaturated: kept by decision, see CLAUDE.md
+        # crimsons stay near 0 degrees, desaturated: kept by decision
         for red in ("#ba0c2f", "#9e1b32", "#c5050c", "#841617"):
             _, _, sat = self.hls(c.red_safe(red))
             self.assertLessEqual(sat, 0.52, red)

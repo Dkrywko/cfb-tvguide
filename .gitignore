@@ -3,3 +3,7 @@ __pycache__/
 .idea/
 .vscode/
 channels.json
+
+# Ignoring this due to it containing sensitive system info.
+# Not in some attempt to hide that it was vibe coded.
+CLAUDE.md
