@@ -65,6 +65,7 @@ STREAMING_HINTS = ("+", "Peacock", "Paramount", "Flo", "ESPN3", "Prime", "Netfli
 SPLIT_LIVE = ("ESPN+",)
 CLOSE_MARGIN = 8                        # one score: touchdown plus two-point conversion
 SORTS = ("now", "channel")              # today's rows: on-now groups, or lineup order like other days
+HANDOFF = dt.timedelta(hours=3)         # kickoffs this far apart on one TV channel are back to back
 
 
 class NoGames(Exception):
@@ -204,6 +205,7 @@ class Game:
         self.utc = parse_utc(event["date"])
         self.start = self.utc.astimezone(tz)
         self.end = self.start + dt.timedelta(minutes=game_len)
+        self.window_end = self.end                       # `end` stretches while a game runs long
         self.network = (comp.get("broadcast") or "").strip() or self._geo(comp) or "TBD"
         self.channel = ""
         self.venue = (comp.get("venue") or {}).get("fullName") or ""
@@ -368,6 +370,11 @@ def streaming_only(name: str) -> bool:
     return all(_part_tier(p) == 3 for p in _net_parts(name))
 
 
+def linear_tv(name: str) -> bool:
+    """A TV channel, whose back-to-back games hand off; streams and TBD run side by side."""
+    return name != "TBD" and not streaming_only(name)
+
+
 def network_sort_key(name: str):
     """Lineup tier, case-insensitive; a simulcast takes its best tier."""
     if name == "TBD":
@@ -387,12 +394,20 @@ def live_sort_key(net: str, lanes):
     return (2, tier)
 
 
+def follows(prev, g):
+    """g can take the lane after prev: it starts after prev's assumed window, or a TV channel
+    moves on to it HANDOFF or more after prev's kickoff. A live overrun never counts."""
+    if g.start >= prev.window_end:
+        return True
+    return g.network == prev.network and linear_tv(g.network) and g.start - prev.start >= HANDOFF
+
+
 def pack_lanes(games, slot_min):
-    """Interval-partition one network's games into non-overlapping lanes."""
+    """Interval-partition one row's games into lanes; render_game stops a block at the next kickoff."""
     lanes = []
     for g in sorted(games, key=lambda x: (x.start, x.matchup())):
         for lane in lanes:
-            if lane[-1].end <= g.start:
+            if follows(lane[-1], g):
                 lane.append(g)
                 break
         else:
@@ -451,7 +466,8 @@ def mark_favs(games, keys):
 
 
 def stretch_live(games, now, slot_min):
-    """A game still on past its assumed window keeps its block a slot beyond now."""
+    """A game still on past its assumed window keeps its block a slot beyond now, short of the
+    next kickoff in its lane."""
     for g in games:
         if g.state == "in":
             g.end = max(g.end, now + dt.timedelta(minutes=slot_min))
@@ -504,9 +520,10 @@ def seg(name, label, options, current):
         for v, text in options) + "</div>"
 
 
-def render_game(g, grid_start, slot_min, row, logos, show_net=False):
+def render_game(g, grid_start, slot_min, row, logos, show_net=False, until=None):
+    end = min(g.end, until) if until else g.end      # until: the next kickoff in this lane
     col = int((g.start - grid_start).total_seconds() // 60 // slot_min) + 2  # +1 network col, +1 1-based
-    span = max(2, int((g.end - g.start).total_seconds() // 60 // slot_min))
+    span = max(2, int((end - g.start).total_seconds() // 60 // slot_min))
     accent = red_safe(g.home.color)
     classes = ["game", f"st-{g.state}"]
     if g.ranked:
@@ -626,8 +643,9 @@ def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_
         for i, lane in enumerate(lanes):
             edge = " last" if i == len(lanes) - 1 else ""   # heavier rule under the network
             parts.append(f'<div class="lanebg{edge}" style="grid-row:{row};grid-column:2/span {n_slots}"></div>')
-            for g in lane:
-                parts.append(render_game(g, grid_start, slot_min, row, logos, show_net=net is None))
+            for g, nxt in zip(lane, lane[1:] + [None]):
+                parts.append(render_game(g, grid_start, slot_min, row, logos, show_net=net is None,
+                                         until=nxt.start if nxt else None))
             row += 1
 
     parts.append('<div class="nowline" hidden></div>')

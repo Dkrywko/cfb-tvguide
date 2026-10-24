@@ -49,6 +49,15 @@ def set_state(ev, state, period=0, home=None, away=None):
             x["score"] = str(score)
 
 
+def sec_pair(gap=210):
+    """SEC Network's VAN @ UGA (12:45) and UK @ SC, kicking off `gap` minutes later."""
+    evs = events()
+    first = next(e for e in evs if "VAN" in json.dumps(e))
+    second = next(e for e in evs if '"UK"' in json.dumps(e))
+    second["date"] = (c.parse_utc(first["date"]) + dt.timedelta(minutes=gap)).strftime("%Y-%m-%dT%H:%MZ")
+    return games([first, second])
+
+
 def at_three():
     """3:00pm: noon games on, 3:30+ to come, one ESPN+ 11am game final."""
     evs = events()
@@ -216,6 +225,29 @@ class TestLayout(unittest.TestCase):
                 for a, b in zip(lane, lane[1:]):
                     self.assertLessEqual(a.end, b.start)
 
+    def test_running_long_never_adds_a_lane(self):
+        uga, sc = sec_pair()                                    # 12:45 then 4:15, back to back
+        uga.state = "in"
+        for past in (-10, 30):                                  # last slot of the window, then over it
+            c.stretch_live([uga, sc], uga.window_end + dt.timedelta(minutes=past), 15)
+            self.assertGreater(uga.end, sc.start)
+            self.assertEqual(len(c.pack_lanes([uga, sc], 15)), 1)
+        html = c.render_game(uga, uga.start, 15, 2, c.Logos("none", True), until=sc.start)
+        self.assertIn("grid-column:2/span 14;", html)           # stops at the next kickoff
+
+    def test_channel_hands_off(self):
+        self.assertEqual(len(c.pack_lanes(sec_pair(195), 15)), 1)    # like ESPN's 7:00 then 10:15
+        self.assertEqual(len(c.pack_lanes(sec_pair(150), 15)), 2)    # too soon: on at once
+        self.assertEqual(len(c.pack_lanes(sec_pair(0), 15)), 2)      # regional coverage
+        uga, sc = sec_pair(195)
+        html = c.render_game(uga, uga.start, 15, 2, c.Logos("none", True), until=sc.start)
+        self.assertIn("grid-column:2/span 13;", html)
+        for net in ("ESPN+", "TBD"):                                 # streams run side by side
+            uga.network = sc.network = net
+            self.assertEqual(len(c.pack_lanes([uga, sc], 15)), 2)
+        uga.network, sc.network = "SEC Network", "ESPN"             # Your teams row: two channels
+        self.assertEqual(len(c.pack_lanes([uga, sc], 15)), 2)
+
     def test_shared_window_spans_late_game(self):
         by_day = {SAT: games()}
         lo, n = c.shared_window(by_day, TZ, 15)
@@ -376,6 +408,18 @@ class TestBuildPage(unittest.TestCase):
         self.assertNotEqual(list(dict.fromkeys(on_now)), lineup)   # same networks, reordered
         self.assertIn("today: on now", now_html)
         self.assertNotIn("today: on now", chan_html)
+
+    def test_live_game_into_next_kickoff_keeps_one_row(self):
+        evs = events()
+        set_state(next(e for e in evs if "VAN" in json.dumps(e)), "in", 4, 21, 17)
+        for argv in ([], ["--sort", "channel"]):
+            html, _, _ = self.build(at(16, 5), argv, evs=copy.deepcopy(evs))
+            grid = html.split('<div class="grid"')[1]
+            self.assertRegex(grid, r'grid-row:\d+/span 1"><span>SEC Network<', argv)
+            block = r'style="grid-row:(\d+);grid-column:(\d+)/span (\d+);[^>]*title="'
+            uga, sc = re.search(block + "Vanderbilt", grid), re.search(block + "Kentucky", grid)
+            self.assertEqual(uga.group(1), sc.group(1))                         # same lane
+            self.assertEqual(int(uga.group(2)) + int(uga.group(3)), int(sc.group(2)))   # ends at kickoff
 
     def test_sort_toggle_served_with_today_only(self):
         html, _, _ = self.build(at(13), ["--sort", "channel"], poll=60)

@@ -97,6 +97,9 @@ Offline, against a trimmed ESPN scoreboard in `tests/fixtures/`.
 
 ## Notes
 
+- A row never grows mid-game. A live game running long stretches past the now-line, but
+  stops at the next kickoff in its row. On a TV channel, kickoffs 3+ hours apart are back
+  to back and share a row, even inside `--game-len`; streams overlap as scheduled.
 - Team accent colors are pushed out of the narrow-band red range before use.
 - Scoreboard queries go one day at a time with no `limit`; ESPN rejects date ranges and a
   large `limit` re-imposes a 25-event cap.
