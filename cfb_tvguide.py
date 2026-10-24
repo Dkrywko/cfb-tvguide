@@ -64,6 +64,7 @@ STREAMING_HINTS = ("+", "Peacock", "Paramount", "Flo", "ESPN3", "Prime", "Netfli
 # Many streams under one name: on today's grid, games in progress get a row of their own.
 SPLIT_LIVE = ("ESPN+",)
 CLOSE_MARGIN = 8                        # one score: touchdown plus two-point conversion
+SORTS = ("now", "channel")              # today's rows: on-now groups, or lineup order like other days
 
 
 class NoGames(Exception):
@@ -495,6 +496,14 @@ def plural(n, word):
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
+def seg(name, label, options, current):
+    """Two-way toggle: buttons sharing a name, the current value pressed."""
+    return f'<div class="seg" role="group" title="{label}">' + "".join(
+        f'<button class="tg" type="button" name="{name}" value="{v}" '
+        f'aria-pressed="{"true" if v == current else "false"}">{text}</button>'
+        for v, text in options) + "</div>"
+
+
 def render_game(g, grid_start, slot_min, row, logos, show_net=False):
     col = int((g.start - grid_start).total_seconds() // 60 // slot_min) + 2  # +1 network col, +1 1-based
     span = max(2, int((g.end - g.start).total_seconds() // 60 // slot_min))
@@ -566,7 +575,8 @@ def render_tba(games):
             f'<div class="chips">{"".join(chips)}</div></div>')
 
 
-def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_slots, collapsed=False):
+def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_slots,
+               collapsed=False, on_now=True):
     timed = [g for g in day_games if not g.time_tba]
     tba = [g for g in day_games if g.time_tba]
 
@@ -583,7 +593,7 @@ def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_
         parts.append("</details>")
         return "".join(parts)
 
-    rows = build_day(timed, slot_min, live=is_today)
+    rows = build_day(timed, slot_min, live=is_today and on_now)
     mine = [g for g in timed if g.fav]
     if mine:                                     # duplicated above the networks, not moved
         rows.insert(0, (None, pack_lanes(mine, slot_min)))
@@ -694,12 +704,21 @@ a{color:inherit}
 .stat span{font-family:var(--display);font-size:10.5px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--ink-3)}
 .spacer{flex:1 1 40px}
-.tg{align-self:flex-end;margin-bottom:4px;background:transparent;color:var(--ink-2);
+.tools{display:flex;flex-wrap:wrap;gap:8px 10px;margin-bottom:4px}
+.tg{background:transparent;color:var(--ink-2);
   border:1px solid var(--rule);border-radius:2px;padding:6px 11px;cursor:pointer;
   font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.12em;
   text-transform:uppercase}
 .tg:hover{color:var(--ink);border-color:var(--ink-3)}
-.tg + .tg{margin-left:-18px}
+/* segmented toggle: shared border, chosen side filled */
+.seg{display:flex}
+.seg .tg{border-radius:0}
+.seg .tg + .tg{margin-left:-1px}
+.seg .tg:first-child{border-radius:2px 0 0 2px}
+.seg .tg:last-child{border-radius:0 2px 2px 0}
+.seg .tg:hover{position:relative}
+.seg .tg[aria-pressed=true]{position:relative;background:var(--ink-2);border-color:var(--ink-2);
+  color:var(--panel);cursor:default}
 
 /* ---- favorite teams ------------------------------------------------------ */
 .game.fav{border-color:var(--fav);outline:1.5px solid var(--fav);outline-offset:-1.5px}
@@ -847,7 +866,7 @@ $logocss
   </div>
   <div class="spacer"></div>
   <div class="stats">$stats</div>
-  $teamsbtn<button class="tg" id="theme" type="button">Theme</button>
+  <div class="tools">$sortbtn$teamsbtn<button class="tg" id="theme" type="button">Theme</button></div>
 </header>
 <div class="legend">
   <span><i>Rows</i> $rows</span>
@@ -916,6 +935,19 @@ $picker
       q.value=''; saveFavs(list);
     });
   }
+  // two-way toggles: buttons share a name, the chosen one aria-pressed
+  function press(name,val){
+    document.querySelectorAll('button[name='+name+']').forEach(function(b){
+      b.setAttribute('aria-pressed',b.value===val?'true':'false');
+    });
+  }
+  // today's row order rides a cookie, so the server sorts the next build
+  document.addEventListener('click',function(e){
+    var b=e.target.closest('button[name=sort]');
+    if(!b||b.getAttribute('aria-pressed')==='true') return;
+    document.cookie='cfb-sort='+b.value+'; max-age=31536000; path=/; SameSite=Lax';
+    press('sort',b.value); refresh();
+  });
   // "now" comes from the server so --now testing lines up
   function sync(){
     var g=document.getElementById('guide');
@@ -1033,6 +1065,8 @@ def parse_args(argv=None):
     p.add_argument("--slot", type=int, default=15, choices=[10, 15, 20, 30], help="grid granularity (default 15)")
     p.add_argument("--day-rollover", type=int, default=4,
                    help="hour at which a TV day ends, so 12:30am kickoffs stay on Saturday (default 4)")
+    p.add_argument("--sort", default="now", choices=SORTS,
+                   help="today's row order: on now first (default), or channel lineup like other days")
     p.add_argument("--hide-streaming", action="store_true", help="drop ESPN+/SECN+/Peacock-only games")
     p.add_argument("--ranked-only", action="store_true", help="only games involving an AP/CFP top-25 team")
     p.add_argument("--network", action="append", default=[], help="only these networks (repeatable, substring)")
@@ -1135,10 +1169,11 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
     logos = Logos(args.logos, args.quiet)
     grid_offset, n_slots = shared_window(by_day, tz, args.slot)
     in_week = win_start <= today <= win_end
+    on_now = args.sort == "now"
     days_html = "".join(
         render_day(day, by_day[day], args.slot, logos, tzname, day == today,
                    day_start(day, tz) + dt.timedelta(minutes=grid_offset), n_slots,
-                   collapsed=in_week and day < today)
+                   collapsed=in_week and day < today, on_now=on_now)
         for day in day_order(by_day, today, win_start, win_end)
     )
     logo_css = logos.css()
@@ -1159,9 +1194,11 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
         for k, v in (("games", len(games)), ("ranked", ranked),
                      ("networks", networks), ("days", len(by_day)))
     )
-    rows = "networks" + (" &mdash; today: on now, then next kickoff" if today in by_day else "")
+    rows = "networks" + (" &mdash; today: on now, then next kickoff" if today in by_day and on_now else "")
 
-    teamsbtn = picker = ""
+    teamsbtn = picker = sortbtn = ""
+    if poll and today in by_day:                 # a rebuild re-sorts, and only today's grid changes
+        sortbtn = seg("sort", "Today's row order", (("now", "On now"), ("channel", "Channel")), args.sort)
     if poll:                                     # favorites ride a cookie, so served pages only
         teams = {t.id: t.full for g in games for t in (g.home, g.away) if t.id}
         opts = "".join(f'<option value="{esc(n)}" data-id="{esc(i)}">'
@@ -1182,6 +1219,7 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
         tzname=esc(tzname),
         gamelen=args.game_len,
         days=days_html,
+        sortbtn=sortbtn,
         teamsbtn=teamsbtn,
         picker=picker,
         logocss=logo_css,
@@ -1194,18 +1232,28 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
     return page, len(games), len(by_day)
 
 
-def cookie_favs(header: str):
-    """ESPN team ids from the served page's cfb-teams cookie: [[id, name], ...]."""
+def _cookie(header: str, name: str):
+    """One cookie's value from a Cookie header, or None."""
     for part in header.split(";"):
         k, _, v = part.strip().partition("=")
-        if k != "cfb-teams":
-            continue
-        try:
-            items = json.loads(urllib.parse.unquote(v))
-        except ValueError:
-            return []
-        return [str(f[0]) for f in items if isinstance(f, list) and f] if isinstance(items, list) else []
-    return []
+        if k == name:
+            return urllib.parse.unquote(v)
+    return None
+
+
+def cookie_favs(header: str):
+    """ESPN team ids from the served page's cfb-teams cookie: [[id, name], ...]."""
+    try:
+        items = json.loads(_cookie(header, "cfb-teams") or "[]")
+    except ValueError:
+        return []
+    return [str(f[0]) for f in items if isinstance(f, list) and f] if isinstance(items, list) else []
+
+
+def cookie_sort(header: str, default: str) -> str:
+    """Today's row order from the served page's cfb-sort cookie, if it names one."""
+    v = _cookie(header, "cfb-sort")
+    return v if v in SORTS else default
 
 
 def serve(args, tz, tzname):
@@ -1218,7 +1266,9 @@ def serve(args, tz, tzname):
             req = nav_args(args, query)
             code = 200
             try:
-                favs = cookie_favs(self.headers.get("Cookie", ""))
+                cookies = self.headers.get("Cookie", "")
+                req.sort = cookie_sort(cookies, req.sort)
+                favs = cookie_favs(cookies)
                 body, _, _ = build_page(req, tz, tzname, current_time(req, tz), poll=POLL_SECONDS, favs=favs)
             except NoGames as ex:
                 body = f"<title>College Football</title><p>{esc(ex)}</p><p>{week_nav(req, ex.offset)}</p>"

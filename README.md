@@ -31,6 +31,10 @@ progress get their own ESPN+ row in group 1, and the rest stay in a second ESPN+
 Other days keep plain lineup order: over-the-air, national cable, conference networks,
 streaming, TBD.
 
+**On now / Channel** switches today's grid between the order above and plain lineup
+order, with ESPN+ back in one row. The toggle shows when today has games on the page, and
+the choice is kept in a cookie. For a written file, use `--sort channel`.
+
 Favorite teams get a star, a highlight, and a "Your teams" row at the top of each day.
 On a served page, pick them with the Teams button; they're kept in a cookie. For a
 written file, use `--team`.
@@ -61,6 +65,7 @@ polled every 5 minutes.
 | `--network ESPN` | Keep only matching networks (repeatable, substring match) |
 | `--channels FILE` | Network-to-channel map (default `~/.config/cfb-tvguide/channels.json`, if present) |
 | `--team UGA` | Favorite team by ESPN id, abbreviation or name (repeatable, exact match) |
+| `--sort now\|channel` | Today's row order: on now first (default), or channel lineup like other days |
 | `--hide-streaming` | Drop streaming-only games and TBD |
 | `--logos none\|link\|embed` | `embed` inlines logos so a written file works offline |
 | `--game-len 210` | Assumed block width in minutes |

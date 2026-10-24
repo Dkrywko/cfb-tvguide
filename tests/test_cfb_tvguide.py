@@ -4,6 +4,7 @@ import colorsys
 import copy
 import datetime as dt
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -46,6 +47,20 @@ def set_state(ev, state, period=0, home=None, away=None):
         score = home if x["homeAway"] == "home" else away
         if score is not None:
             x["score"] = str(score)
+
+
+def at_three():
+    """3:00pm: noon games on, 3:30+ to come, one ESPN+ 11am game final."""
+    evs = events()
+    for ev in evs:
+        g = c.Game(ev, TZ, 210)
+        if g.start < at(12):
+            set_state(ev, "post")
+        elif g.start <= at(15):
+            set_state(ev, "in", 3, 14, 10)
+        else:
+            set_state(ev, "pre")
+    return evs
 
 
 class TestGame(unittest.TestCase):
@@ -127,17 +142,7 @@ class TestNetworks(unittest.TestCase):
 
 class TestLiveOrdering(unittest.TestCase):
     def day(self):
-        """3:00pm: noon games on, 3:30+ to come, one ESPN+ 11am game final."""
-        evs = events()
-        for ev in evs:
-            g = c.Game(ev, TZ, 210)
-            if g.start < at(12):
-                set_state(ev, "post")
-            elif g.start <= at(15):
-                set_state(ev, "in", 3, 14, 10)
-            else:
-                set_state(ev, "pre")
-        return games(evs)
+        return games(at_three())
 
     def test_groups_in_then_pre_then_post(self):
         rows = c.build_day(self.day(), 15, live=True)
@@ -249,6 +254,12 @@ class TestFavorites(unittest.TestCase):
         self.assertEqual(c.cookie_favs("cfb-teams=%7B%7D"), [])
         self.assertEqual(c.cookie_favs(""), [])
 
+    def test_cookie_sort(self):
+        self.assertEqual(c.cookie_sort("cfb-teams=%5B%5D; cfb-sort=channel", "now"), "channel")
+        self.assertEqual(c.cookie_sort("cfb-sort=now", "channel"), "now")
+        self.assertEqual(c.cookie_sort("cfb-sort=junk", "now"), "now")
+        self.assertEqual(c.cookie_sort("", "channel"), "channel")
+
 
 class TestServeHelpers(unittest.TestCase):
     def test_nav_args(self):
@@ -347,6 +358,33 @@ class TestBuildPage(unittest.TestCase):
         self.assertIn("ESPN/Disney+", html)
         self.assertNotIn("<span>ESPN+</span>", html)
         self.assertEqual(n, 12 - 3 - 2)                         # three ESPN+, two MW+
+
+    @staticmethod
+    def nets(html):
+        """Row labels of the first grid on the page, top to bottom."""
+        grid = html.split('<div class="grid"')[1].split('class="nowline"')[0]
+        return re.findall(r'<div class="net[^"]*"[^>]*><span>([^<]*)</span>', grid)
+
+    def test_sort_channel_is_lineup_order(self):
+        now_html, _, _ = self.build(at(15), evs=at_three())
+        chan_html, _, _ = self.build(at(15), ["--sort", "channel"], evs=at_three())
+        on_now, lineup = self.nets(now_html), self.nets(chan_html)
+        self.assertEqual(on_now.count("ESPN+"), 2)              # split into on-now and the rest
+        self.assertEqual(lineup.count("ESPN+"), 1)
+        self.assertEqual(lineup, sorted(lineup, key=c.network_sort_key))
+        self.assertEqual(set(on_now), set(lineup))
+        self.assertNotEqual(list(dict.fromkeys(on_now)), lineup)   # same networks, reordered
+        self.assertIn("today: on now", now_html)
+        self.assertNotIn("today: on now", chan_html)
+
+    def test_sort_toggle_served_with_today_only(self):
+        html, _, _ = self.build(at(13), ["--sort", "channel"], poll=60)
+        self.assertIn('name="sort" value="channel" aria-pressed="true"', html)
+        self.assertIn('name="sort" value="now" aria-pressed="false"', html)
+        written, _, _ = self.build(at(13))
+        self.assertNotIn('name="sort"', written)                # needs a rebuild: served only
+        past, _, _ = self.build(at(13, day=dt.date(2026, 10, 10)), ["--offset", "-1"], poll=60)
+        self.assertNotIn('name="sort"', past)                   # no today grid to sort
 
 
 if __name__ == "__main__":
