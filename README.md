@@ -116,3 +116,7 @@ Offline, against a trimmed ESPN scoreboard in `tests/fixtures/`.
 - A failed fetch falls back to the cached copy, so a flaky connection degrades to stale
   data rather than an error page.
 - Responses and logos cache under `~/.cache/cfb-tvguide/`.
+
+## License
+
+MIT, see `LICENSE`.
