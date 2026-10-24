@@ -87,6 +87,16 @@ case-insensitively; values are shown as written. It is read once at startup.
 {"ABC": "7.1", "ESPN": 206, "ESPN2": 209, "SEC Network": 611}
 ```
 
+## Container
+
+```bash
+docker run -p 8080:8080 -e CFB_TZ=America/New_York -v cfb-cache:/cache ghcr.io/dkrywko/cfb-tvguide:0.1.0
+```
+
+Chainguard's Python image plus zone data, running `--serve` on port 8080 as a non-root
+user with responses cached in `/cache`; it runs on a read-only root filesystem.
+`docker build -t cfb-tvguide .` builds it locally, and a `v*` tag publishes it to GHCR.
+
 ## Tests
 
 ```bash
