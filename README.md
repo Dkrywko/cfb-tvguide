@@ -9,6 +9,9 @@ API. Python 3.9+ standard library only.
 ./cfb_tvguide.py --tz America/New_York -o week.html      # one-off page
 ```
 
+**Standard / Compact** sets the hour width. Compact halves it, so more of the day fits on
+screen. It works in written files too, and each browser keeps its choice, like the theme.
+
 ## Live mode
 
 `--serve` runs a local web server that rebuilds the page on every load. The open page

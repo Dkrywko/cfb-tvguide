@@ -386,6 +386,18 @@ class TestBuildPage(unittest.TestCase):
         past, _, _ = self.build(at(13, day=dt.date(2026, 10, 10)), ["--offset", "-1"], poll=60)
         self.assertNotIn('name="sort"', past)                   # no today grid to sort
 
+    def test_view_toggle_in_files_too(self):
+        for kw in ({}, {"poll": 60}):
+            html, _, _ = self.build(at(13), **kw)
+            self.assertIn('name="view" value="standard" aria-pressed="true"', html)
+
+    def test_compact_halves_hours(self):
+        css = c.PAGE.template.split("</style>")[0]
+        standard = [int(w) for w in re.findall(r":root\{[^}]*--slotw:(\d+)px", css)]
+        compact = [int(w) for w in re.findall(r":root\[data-view=compact\]\{--slotw:(\d+)px", css)]
+        self.assertEqual(len(standard), 2)                      # desktop and phone widths
+        self.assertEqual(compact, [w // 2 for w in standard])
+
 
 if __name__ == "__main__":
     unittest.main()

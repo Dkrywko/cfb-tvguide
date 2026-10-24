@@ -674,6 +674,8 @@ PAGE = Template("""<title>$title</title>
   --live:#63cfb0; --fav:#8fb1e8;
   --shadow:0 1px 2px rgba(0,0,0,.3);
 }
+/* compact view: hours at half width */
+:root[data-view=compact]{--slotw:24px}
 
 *{box-sizing:border-box}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);
@@ -852,6 +854,7 @@ footer{padding:22px 24px 44px;color:var(--ink-3);font-size:12px;
   font-variant-numeric:tabular-nums}
 @media (max-width:640px){
   :root{--netw:88px;--slotw:42px}
+  :root[data-view=compact]{--slotw:21px}
   .top,.legend,.day,footer{padding-left:14px;padding-right:14px}
   .day h2 .ct{margin-left:0}
 }
@@ -866,7 +869,7 @@ $logocss
   </div>
   <div class="spacer"></div>
   <div class="stats">$stats</div>
-  <div class="tools">$sortbtn$teamsbtn<button class="tg" id="theme" type="button">Theme</button></div>
+  <div class="tools">$sortbtn$viewbtn$teamsbtn<button class="tg" id="theme" type="button">Theme</button></div>
 </header>
 <div class="legend">
   <span><i>Rows</i> $rows</span>
@@ -880,8 +883,9 @@ $days
 $picker
 <script>
 (function(){
-  var root=document.documentElement, k='cfb-theme', skew=0;
+  var root=document.documentElement, k='cfb-theme', vk='cfb-view', skew=0;
   try{var saved=localStorage.getItem(k); if(saved) root.setAttribute('data-theme',saved);}catch(e){}
+  try{var vw=localStorage.getItem(vk); if(vw) root.setAttribute('data-view',vw);}catch(e){}
   // delegated: the button is replaced on every refresh
   document.addEventListener('click',function(e){
     if(!e.target.closest('#theme')) return;
@@ -948,6 +952,19 @@ $picker
     document.cookie='cfb-sort='+b.value+'; max-age=31536000; path=/; SameSite=Lax';
     press('sort',b.value); refresh();
   });
+  // hour width, per browser like the theme; matched by name, since the root carries data-view
+  function pressView(){press('view',root.getAttribute('data-view')||'standard');}
+  function slotw(){return parseFloat(getComputedStyle(root).getPropertyValue('--slotw'));}
+  document.addEventListener('click',function(e){
+    var b=e.target.closest('button[name=view]');
+    if(!b||b.getAttribute('aria-pressed')==='true') return;
+    var was=slotw();
+    root.setAttribute('data-view',b.value);
+    try{localStorage.setItem(vk,b.value);}catch(e){}
+    var ratio=slotw()/was;                    // same kickoff stays at each grid's left edge
+    document.querySelectorAll('.scroller').forEach(function(s){s.scrollLeft*=ratio;});
+    pressView(); tick();
+  });
   // "now" comes from the server so --now testing lines up
   function sync(){
     var g=document.getElementById('guide');
@@ -989,10 +1006,10 @@ $picker
         var s=d.querySelector('.scroller');
         if(s&&keep[d.dataset.day]) s.scrollLeft=keep[d.dataset.day];
       });
-      sync(); tick();
+      pressView(); sync(); tick();
     }).catch(function(){});
   }
-  sync(); tick(true); setInterval(tick,60000);
+  pressView(); sync(); tick(true); setInterval(tick,60000);
   var poll=+document.getElementById('guide').dataset.poll;
   if(poll>0&&location.protocol.indexOf('http')===0){
     setInterval(refresh,poll*1000);
@@ -1199,6 +1216,8 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
     teamsbtn = picker = sortbtn = ""
     if poll and today in by_day:                 # a rebuild re-sorts, and only today's grid changes
         sortbtn = seg("sort", "Today's row order", (("now", "On now"), ("channel", "Channel")), args.sort)
+    # CSS only, so written files get it too; the page presses the browser's saved choice
+    viewbtn = seg("view", "Hour width", (("standard", "Standard"), ("compact", "Compact")), "standard")
     if poll:                                     # favorites ride a cookie, so served pages only
         teams = {t.id: t.full for g in games for t in (g.home, g.away) if t.id}
         opts = "".join(f'<option value="{esc(n)}" data-id="{esc(i)}">'
@@ -1220,6 +1239,7 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
         gamelen=args.game_len,
         days=days_html,
         sortbtn=sortbtn,
+        viewbtn=viewbtn,
         teamsbtn=teamsbtn,
         picker=picker,
         logocss=logo_css,
