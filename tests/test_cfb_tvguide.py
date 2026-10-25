@@ -430,17 +430,24 @@ class TestBuildPage(unittest.TestCase):
         past, _, _ = self.build(at(13, day=dt.date(2026, 10, 10)), ["--offset", "-1"], poll=60)
         self.assertNotIn('name="sort"', past)                   # no today grid to sort
 
-    def test_view_toggle_in_files_too(self):
-        for kw in ({}, {"poll": 60}):
-            html, _, _ = self.build(at(13), **kw)
-            self.assertIn('name="view" value="standard" aria-pressed="true"', html)
+    def test_hour_rules_follow_the_slot(self):
+        for slot in (10, 15, 20, 30):
+            html, _, _ = self.build(at(13), ["--slot", str(slot)])
+            grid = html.split('<div class="grid"')[1].split('class="nowline"')[0]
+            heads = re.findall(r'"hour" style="grid-row:1;grid-column:(\d+/span \d+)"', grid)
+            rules = re.findall(r'"hourbg" style="grid-row:2/span (\d+);grid-column:(\d+/span \d+)"', grid)
+            self.assertEqual([col for _, col in rules], heads, slot)     # on the header's grid lines
+            lanes = grid.count('class="lanebg')
+            self.assertEqual({int(n) for n, _ in rules}, {lanes}, slot)  # down through every lane
+            slots = int(re.search(r"--slots:(\d+)", grid).group(1))
+            self.assertEqual(len(heads), slots * slot // 60, slot)       # hourly, whatever the slot
 
-    def test_compact_halves_hours(self):
+    def test_slots_stretch_from_a_floor(self):
         css = c.PAGE.template.split("</style>")[0]
-        standard = [int(w) for w in re.findall(r":root\{[^}]*--slotw:(\d+)px", css)]
-        compact = [int(w) for w in re.findall(r":root\[data-view=compact\]\{--slotw:(\d+)px", css)]
-        self.assertEqual(len(standard), 2)                      # desktop and phone widths
-        self.assertEqual(compact, [w // 2 for w in standard])
+        self.assertIn("repeat(var(--slots),minmax(var(--slotw),1fr))", css)
+        self.assertIn("min-width:calc(var(--netw) + var(--slots)*var(--slotw))", css)
+        floors = re.findall(r":root\{[^}]*--slotw:(\d+)px", css)
+        self.assertEqual(floors, ["24", "21"])                  # desktop, phone: the old Compact widths
 
 
 if __name__ == "__main__":
