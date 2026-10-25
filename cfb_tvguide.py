@@ -622,13 +622,15 @@ def render_day(day, day_games, slot_min, logos, tzname, is_today, grid_start, n_
     )
     parts.append(f'<div class="corner">{esc(tzname)}</div>')
 
-    # hour header
+    # hour header, and each hour's rule down through the lanes on the same grid lines
+    n_lanes = sum(len(lanes) for _, lanes in rows)
     for h in range(0, n_slots, per_hour):
         t = grid_start + dt.timedelta(minutes=h * slot_min)
         span = min(per_hour, n_slots - h)
         parts.append(
             f'<div class="hour" style="grid-row:1;grid-column:{h + 2}/span {span}">'
             f'{t:%-I}<span class="ap">{t:%p}</span></div>'
+            f'<div class="hourbg" style="grid-row:2/span {n_lanes};grid-column:{h + 2}/span {span}"></div>'
         )
 
     row = 2
@@ -664,7 +666,7 @@ PAGE = Template("""<title>$title</title>
 <style>
 /* Turf-biased neutrals, amber for ranked, teal for live. No pure red, no pure black. */
 :root{
-  --slotw:48px; --netw:118px; --rowh:64px; --hdrh:36px;
+  --slotw:24px; --netw:118px; --rowh:64px; --hdrh:36px;
 
   --ground:#eceee7; --panel:#fbfcf9; --sunk:#e3e6dc;
   --rule:#d3d8c9; --rule-soft:#e6e9de;
@@ -692,8 +694,6 @@ PAGE = Template("""<title>$title</title>
   --live:#63cfb0; --fav:#8fb1e8;
   --shadow:0 1px 2px rgba(0,0,0,.3);
 }
-/* compact view: hours at half width */
-:root[data-view=compact]{--slotw:24px}
 
 *{box-sizing:border-box}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);
@@ -787,9 +787,11 @@ a{color:inherit}
 
 .scroller{overflow-x:auto;overflow-y:visible;border:1px solid var(--rule);
   background:var(--panel);box-shadow:var(--shadow)}
+/* slots stretch to fill the width, never below --slotw; past that the grid scrolls */
 .grid{position:relative;display:grid;
-  grid-template-columns:var(--netw) repeat(var(--slots),var(--slotw));
-  grid-template-rows:var(--hdrh);grid-auto-rows:var(--rowh);width:max-content;min-width:100%}
+  grid-template-columns:var(--netw) repeat(var(--slots),minmax(var(--slotw),1fr));
+  grid-template-rows:var(--hdrh);grid-auto-rows:var(--rowh);
+  min-width:calc(var(--netw) + var(--slots)*var(--slotw))}
 
 .corner{position:sticky;left:0;top:0;z-index:6;grid-row:1;grid-column:1;background:var(--sunk);
   border-right:2px solid var(--rule);border-bottom:2px solid var(--rule);
@@ -809,9 +811,9 @@ a{color:inherit}
   font-family:var(--display);font-size:14px;font-weight:600;letter-spacing:.02em}
 .net span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .net .ch{font-size:11px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.lanebg{z-index:0;border-bottom:1px solid var(--rule-soft);
-  background-image:linear-gradient(to right,var(--rule) 0 1px,transparent 1px);
-  background-size:calc(var(--slotw)*4) 100%}
+/* hour rules sit on the header's grid lines, so they meet at any slot width */
+.hourbg{z-index:0;border-left:1px solid var(--rule)}
+.lanebg{z-index:0;border-bottom:1px solid var(--rule-soft)}
 /* lanes within a network: light rule; between networks: heavy */
 .lanebg.last{border-bottom:2px solid var(--rule)}
 
@@ -853,7 +855,7 @@ a{color:inherit}
 .sc{margin-left:auto;padding-left:6px;font-weight:700;font-variant-numeric:tabular-nums}
 
 .nowline{position:absolute;top:0;bottom:0;width:2px;background:var(--gold);z-index:2;
-  pointer-events:none}
+  pointer-events:none;left:calc(var(--netw) + (100% - var(--netw))*var(--at,0))}
 .nowline::before{content:"";position:absolute;top:0;left:-3px;border:4px solid transparent;
   border-top-color:var(--gold)}
 
@@ -871,8 +873,7 @@ a{color:inherit}
 footer{padding:22px 24px 44px;color:var(--ink-3);font-size:12px;
   font-variant-numeric:tabular-nums}
 @media (max-width:640px){
-  :root{--netw:88px;--slotw:42px}
-  :root[data-view=compact]{--slotw:21px}
+  :root{--netw:88px;--slotw:21px}
   .top,.legend,.day,footer{padding-left:14px;padding-right:14px}
   .day h2 .ct{margin-left:0}
 }
@@ -887,7 +888,7 @@ $logocss
   </div>
   <div class="spacer"></div>
   <div class="stats">$stats</div>
-  <div class="tools">$sortbtn$viewbtn$teamsbtn<button class="tg" id="theme" type="button">Theme</button></div>
+  <div class="tools">$sortbtn$teamsbtn<button class="tg" id="theme" type="button">Theme</button></div>
 </header>
 <div class="legend">
   <span><i>Rows</i> $rows</span>
@@ -901,9 +902,8 @@ $days
 $picker
 <script>
 (function(){
-  var root=document.documentElement, k='cfb-theme', vk='cfb-view', skew=0;
+  var root=document.documentElement, k='cfb-theme', skew=0;
   try{var saved=localStorage.getItem(k); if(saved) root.setAttribute('data-theme',saved);}catch(e){}
-  try{var vw=localStorage.getItem(vk); if(vw) root.setAttribute('data-view',vw);}catch(e){}
   // delegated: the button is replaced on every refresh
   document.addEventListener('click',function(e){
     if(!e.target.closest('#theme')) return;
@@ -970,19 +970,6 @@ $picker
     document.cookie='cfb-sort='+b.value+'; max-age=31536000; path=/; SameSite=Lax';
     press('sort',b.value); refresh();
   });
-  // hour width, per browser like the theme; matched by name, since the root carries data-view
-  function pressView(){press('view',root.getAttribute('data-view')||'standard');}
-  function slotw(){return parseFloat(getComputedStyle(root).getPropertyValue('--slotw'));}
-  document.addEventListener('click',function(e){
-    var b=e.target.closest('button[name=view]');
-    if(!b||b.getAttribute('aria-pressed')==='true') return;
-    var was=slotw();
-    root.setAttribute('data-view',b.value);
-    try{localStorage.setItem(vk,b.value);}catch(e){}
-    var ratio=slotw()/was;                    // same kickoff stays at each grid's left edge
-    document.querySelectorAll('.scroller').forEach(function(s){s.scrollLeft*=ratio;});
-    pressView(); tick();
-  });
   // "now" comes from the server so --now testing lines up
   function sync(){
     var g=document.getElementById('guide');
@@ -992,15 +979,14 @@ $picker
     document.querySelectorAll('.grid').forEach(function(g){
       var line=g.querySelector('.nowline'); if(!line) return;
       if(g.dataset.today!=='1'){line.hidden=true;return;}
-      var start=new Date(g.dataset.start), slot=+g.dataset.slot;
+      var start=new Date(g.dataset.start), slot=+g.dataset.slot, total=+g.style.getPropertyValue('--slots');
       var slots=(Date.now()+skew-start)/60000/slot;
-      var cs=getComputedStyle(g), cols=cs.gridTemplateColumns.split(' ');
-      var total=cols.length-1, w=parseFloat(cols[1]);
       if(slots<0||slots>total){line.hidden=true;return;}
-      line.style.left=(parseFloat(cols[0])+slots*w)+'px';
+      line.style.setProperty('--at',slots/total);   // a share, not px: CSS keeps it on time as slots stretch
       line.hidden=false;
       // first load only: bring the now-line into view with an hour of lead-in
-      if(jump) g.parentNode.scrollLeft=Math.max(0,(slots-60/slot)*w);
+      if(jump) g.parentNode.scrollLeft=Math.max(0,
+        line.offsetLeft-g.querySelector('.corner').offsetWidth-g.querySelector('.hour').offsetWidth);
     });
   }
   // swap in a fresh copy, keeping each day's horizontal scroll and open/closed state
@@ -1024,10 +1010,10 @@ $picker
         var s=d.querySelector('.scroller');
         if(s&&keep[d.dataset.day]) s.scrollLeft=keep[d.dataset.day];
       });
-      pressView(); sync(); tick();
+      sync(); tick();
     }).catch(function(){});
   }
-  pressView(); sync(); tick(true); setInterval(tick,60000);
+  sync(); tick(true); setInterval(tick,60000);
   var poll=+document.getElementById('guide').dataset.poll;
   if(poll>0&&location.protocol.indexOf('http')===0){
     setInterval(refresh,poll*1000);
@@ -1234,8 +1220,6 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
     teamsbtn = picker = sortbtn = ""
     if poll and today in by_day:                 # a rebuild re-sorts, and only today's grid changes
         sortbtn = seg("sort", "Today's row order", (("now", "On now"), ("channel", "Channel")), args.sort)
-    # CSS only, so written files get it too; the page presses the browser's saved choice
-    viewbtn = seg("view", "Hour width", (("standard", "Standard"), ("compact", "Compact")), "standard")
     if poll:                                     # favorites ride a cookie, so served pages only
         teams = {t.id: t.full for g in games for t in (g.home, g.away) if t.id}
         opts = "".join(f'<option value="{esc(n)}" data-id="{esc(i)}">'
@@ -1257,7 +1241,6 @@ def build_page(args, tz, tzname, now, poll=0, favs=()):
         gamelen=args.game_len,
         days=days_html,
         sortbtn=sortbtn,
-        viewbtn=viewbtn,
         teamsbtn=teamsbtn,
         picker=picker,
         logocss=logo_css,

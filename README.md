@@ -9,9 +9,6 @@ API. Python 3.9+ standard library only.
 ./cfb_tvguide.py --tz America/New_York -o week.html      # one-off page
 ```
 
-**Standard / Compact** sets the hour width. Compact halves it, so more of the day fits on
-screen. It works in written files too, and each browser keeps its choice, like the theme.
-
 ## Live mode
 
 `--serve` runs a local web server that rebuilds the page on every load. The open page
@@ -107,6 +104,8 @@ Offline, against a trimmed ESPN scoreboard in `tests/fixtures/`.
 
 ## Notes
 
+- Hour columns stretch to fill the window, down to a minimum width; a narrower window
+  scrolls each day's grid sideways instead.
 - A row never grows mid-game. A live game running long stretches past the now-line, but
   stops at the next kickoff in its row. On a TV channel, kickoffs 3+ hours apart are back
   to back and share a row, even inside `--game-len`; streams overlap as scheduled.
