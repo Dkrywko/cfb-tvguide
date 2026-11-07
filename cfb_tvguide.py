@@ -678,22 +678,6 @@ PAGE = Template("""<title>$title</title>
   --display:"Saira Condensed",ui-sans-serif,"Helvetica Neue Condensed","Arial Narrow",sans-serif;
   --body:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
-  --ground:#1b1e19; --panel:#252921; --sunk:#20241d;
-  --rule:#3a4034; --rule-soft:#2d3229;
-  --ink:#e8eade; --ink-2:#b3b9aa; --ink-3:#868d7d;
-  --gold:#d5a94f; --gold-ink:#e8c884;
-  --live:#63cfb0; --fav:#8fb1e8;
-  --shadow:0 1px 2px rgba(0,0,0,.3);
-}}
-:root[data-theme=dark]{
-  --ground:#1b1e19; --panel:#252921; --sunk:#20241d;
-  --rule:#3a4034; --rule-soft:#2d3229;
-  --ink:#e8eade; --ink-2:#b3b9aa; --ink-3:#868d7d;
-  --gold:#d5a94f; --gold-ink:#e8c884;
-  --live:#63cfb0; --fav:#8fb1e8;
-  --shadow:0 1px 2px rgba(0,0,0,.3);
-}
 
 *{box-sizing:border-box}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);
@@ -725,6 +709,7 @@ a{color:inherit}
   text-transform:uppercase;color:var(--ink-3)}
 .spacer{flex:1 1 40px}
 .tools{display:flex;flex-wrap:wrap;gap:8px 10px;margin-bottom:4px}
+.tools:empty{display:none}                  /* written files have no toggles */
 .tg{background:transparent;color:var(--ink-2);
   border:1px solid var(--rule);border-radius:2px;padding:6px 11px;cursor:pointer;
   font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.12em;
@@ -888,7 +873,7 @@ $logocss
   </div>
   <div class="spacer"></div>
   <div class="stats">$stats</div>
-  <div class="tools">$sortbtn$teamsbtn<button class="tg" id="theme" type="button">Theme</button></div>
+  <div class="tools">$sortbtn$teamsbtn</div>
 </header>
 <div class="legend">
   <span><i>Rows</i> $rows</span>
@@ -902,17 +887,7 @@ $days
 $picker
 <script>
 (function(){
-  var root=document.documentElement, k='cfb-theme', skew=0;
-  try{var saved=localStorage.getItem(k); if(saved) root.setAttribute('data-theme',saved);}catch(e){}
-  // delegated: the button is replaced on every refresh
-  document.addEventListener('click',function(e){
-    if(!e.target.closest('#theme')) return;
-    var cur=root.getAttribute('data-theme');
-    if(!cur) cur=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-    var next=cur==='dark'?'light':'dark';
-    root.setAttribute('data-theme',next);
-    try{localStorage.setItem(k,next);}catch(e){}
-  });
+  var skew=0;
   // favorite teams: [[espn id, name], ...] in a cookie the server reads on every build
   var ck='cfb-teams', picker=document.getElementById('picker');
   function favs(){
