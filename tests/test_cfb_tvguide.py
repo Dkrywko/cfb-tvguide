@@ -281,7 +281,7 @@ class TestFavorites(unittest.TestCase):
 
     def test_cookie(self):
         v = urllib.parse.quote(json.dumps([["61", "Georgia Bulldogs"], ["333", "Alabama"]]))
-        self.assertEqual(c.cookie_favs(f"cfb-theme=dark; cfb-teams={v}"), ["61", "333"])
+        self.assertEqual(c.cookie_favs(f"cfb-sort=channel; cfb-teams={v}"), ["61", "333"])
         self.assertEqual(c.cookie_favs("cfb-teams=junk"), [])
         self.assertEqual(c.cookie_favs("cfb-teams=%7B%7D"), [])
         self.assertEqual(c.cookie_favs(""), [])
@@ -371,6 +371,15 @@ class TestBuildPage(unittest.TestCase):
         html, _, _ = self.build(at(13))
         self.assertNotIn('id="picker"', html)
         self.assertNotIn('class="wnav"', html)
+
+    def test_light_only(self):
+        for kw in ({}, {"poll": 60}):
+            html, _, _ = self.build(at(13), **kw)
+            self.assertNotIn("prefers-color-scheme", html, kw)
+            self.assertNotIn("data-theme", html, kw)
+            self.assertNotIn('id="theme"', html, kw)
+        written, _, _ = self.build(at(13))
+        self.assertIn('<div class="tools"></div>', written)     # hidden by .tools:empty
 
     def test_served_has_picker_and_nav(self):
         html, _, _ = self.build(at(13), poll=60, favs=["61"])
